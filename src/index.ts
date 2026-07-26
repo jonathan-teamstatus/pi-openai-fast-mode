@@ -6,7 +6,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  applyFastServiceTier,
+  applyFastModePayload,
   describeFastMode,
   fastModeFooter,
   isRecord,
@@ -49,7 +49,7 @@ function saveSettings(settingsFile: string, settings: FastModeSettings): void {
   renameSync(temporaryPath, settingsFile);
 }
 
-export function registerOpenAIFastMode(pi: ExtensionAPI, settingsFile = SETTINGS_FILE): void {
+export function registerFastMode(pi: ExtensionAPI, settingsFile = SETTINGS_FILE): void {
   let enabled = false;
 
   function updateStatus(ctx: ExtensionContext): void {
@@ -65,10 +65,10 @@ export function registerOpenAIFastMode(pi: ExtensionAPI, settingsFile = SETTINGS
 
     try {
       saveSettings(settingsFile, { enabled });
-      ctx.ui.notify(`OpenAI Fast mode ${enabled ? "enabled" : "disabled"}`, "info");
+      ctx.ui.notify(`Fast mode ${enabled ? "enabled" : "disabled"}`, "info");
     } catch (error) {
       ctx.ui.notify(
-        `OpenAI Fast mode ${enabled ? "enabled" : "disabled"} for this process, but the preference could not be saved: ${
+        `Fast mode ${enabled ? "enabled" : "disabled"} for this process, but the preference could not be saved: ${
           error instanceof Error ? error.message : String(error)
         }`,
         "warning",
@@ -85,14 +85,14 @@ export function registerOpenAIFastMode(pi: ExtensionAPI, settingsFile = SETTINGS
     }
 
     const toggleLabel = enabled ? "Turn Fast mode off" : "Turn Fast mode on";
-    const selection = await ctx.ui.select("OpenAI Fast mode", [toggleLabel, "Show status"]);
+    const selection = await ctx.ui.select("Fast mode", [toggleLabel, "Show status"]);
 
     if (selection === toggleLabel) setEnabled(!enabled, ctx);
     else if (selection === "Show status") showStatus(ctx);
   }
 
   pi.registerCommand("fast", {
-    description: "Control OpenAI's Fast service tier",
+    description: "Control provider-specific Fast mode behavior",
     getArgumentCompletions(prefix) {
       const options = ["on", "off", "toggle", "status"];
       const normalizedPrefix = prefix.trim().toLowerCase();
@@ -127,10 +127,12 @@ export function registerOpenAIFastMode(pi: ExtensionAPI, settingsFile = SETTINGS
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    return applyFastServiceTier(ctx.model, event.payload, enabled);
+    return applyFastModePayload(ctx.model, event.payload, enabled);
   });
 }
 
-export default function openAIFastModeExtension(pi: ExtensionAPI): void {
-  registerOpenAIFastMode(pi);
+export const registerOpenAIFastMode = registerFastMode;
+
+export default function fastModeExtension(pi: ExtensionAPI): void {
+  registerFastMode(pi);
 }

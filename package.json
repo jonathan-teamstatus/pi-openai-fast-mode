@@ -1,7 +1,7 @@
 {
   "name": "@jonathan-teamstatus/pi-openai-fast-mode",
   "version": "0.1.0",
-  "description": "TUI controls for OpenAI's Fast service tier in the Pi coding agent",
+  "description": "Provider-aware Fast mode controls for the Pi coding agent",
   "type": "module",
   "private": false,
   "license": "MIT",
@@ -18,6 +18,9 @@
     "pi-extension",
     "openai",
     "codex",
+    "anthropic",
+    "google",
+    "moonshot",
     "fast-mode"
   ],
   "files": [

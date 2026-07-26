@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerOpenAIFastMode } from "../src/index.ts";
+import { registerFastMode } from "../src/index.ts";
 
 function createHarness(settingsFile: string) {
   const commands = new Map<string, any>();
@@ -19,20 +19,16 @@ function createHarness(settingsFile: string) {
     },
   } as unknown as ExtensionAPI;
 
-  registerOpenAIFastMode(pi, settingsFile);
+  registerFastMode(pi, settingsFile);
   return { commands, events };
 }
 
-function createContext() {
+function createContext(model: Record<string, unknown>) {
   const statuses = new Map<string, string | undefined>();
   const notifications: Array<{ message: string; level: string }> = [];
   const context = {
     hasUI: true,
-    model: {
-      provider: "openai-codex",
-      id: "gpt-5.5",
-      api: "openai-codex-responses",
-    },
+    model,
     ui: {
       setStatus(key: string, value: string | undefined) {
         statuses.set(key, value);
@@ -48,7 +44,7 @@ function createContext() {
   return { context, statuses, notifications };
 }
 
-test("registers Fast mode command and lifecycle hooks", () => {
+test("registers the preserved /fast command and lifecycle hooks", () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-fast-mode-test-"));
   try {
     const { commands, events } = createHarness(join(directory, "settings.json"));
@@ -59,33 +55,76 @@ test("registers Fast mode command and lifecycle hooks", () => {
   }
 });
 
-test("command persists state and provider hook follows the persisted preference", async () => {
+test("command persists state and provider hook applies a table of strategies", async () => {
+  const cases = [
+    {
+      name: "OpenAI",
+      model: { provider: "openai", id: "gpt", api: "openai-responses" },
+      payload: { model: "gpt" },
+      expected: { model: "gpt", service_tier: "priority" },
+      footer: "[openai: fast]",
+    },
+    {
+      name: "Anthropic",
+      model: { provider: "anthropic", id: "claude", api: "anthropic-messages" },
+      payload: { model: "claude" },
+      expected: { model: "claude", service_tier: "auto" },
+      footer: "[claude: fast]",
+    },
+    {
+      name: "Google",
+      model: { provider: "google", id: "gemini", api: "google-generative-ai" },
+      payload: { model: "gemini", config: { temperature: 0.2 } },
+      expected: { model: "gemini", config: { temperature: 0.2, serviceTier: "priority" } },
+      footer: "[gemini: fast]",
+    },
+    {
+      name: "Moonshot",
+      model: { provider: "moonshotai-cn", id: "kimi-k2.7-code", api: "openai-completions" },
+      payload: { model: "kimi-k2.7-code" },
+      expected: { model: "kimi-k2.7-code-highspeed" },
+      footer: "[kimi: highspeed]",
+    },
+  ];
+
+  for (const entry of cases) {
+    const directory = mkdtempSync(join(tmpdir(), "pi-fast-mode-test-"));
+    try {
+      const settingsFile = join(directory, "settings.json");
+      const { commands, events } = createHarness(settingsFile);
+      const { context, statuses } = createContext(entry.model);
+      const sessionStart = events.get("session_start");
+      const providerHook = events.get("before_provider_request");
+      const command = commands.get("fast")?.handler;
+      assert.ok(sessionStart && providerHook && command, entry.name);
+
+      sessionStart({}, context);
+      await command("on", context);
+      assert.deepEqual(JSON.parse(readFileSync(settingsFile, "utf8")), { enabled: true }, entry.name);
+      assert.equal(statuses.get("openai-fast-mode"), entry.footer, entry.name);
+      assert.deepEqual(providerHook({ payload: entry.payload }, context), entry.expected, entry.name);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("disabling keeps the setting schema and opts Anthropic out of Priority Tier", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-fast-mode-test-"));
-  const settingsFile = join(directory, "settings.json");
-
   try {
+    const settingsFile = join(directory, "settings.json");
     const { commands, events } = createHarness(settingsFile);
-    const { context, statuses } = createContext();
-    const sessionStart = events.get("session_start");
-    const providerHook = events.get("before_provider_request");
+    const { context } = createContext({ provider: "anthropic", id: "claude", api: "anthropic-messages" });
     const command = commands.get("fast")?.handler;
-    assert.ok(sessionStart && providerHook && command);
-
-    sessionStart({}, context);
-    assert.equal(statuses.get("openai-fast-mode"), undefined);
-    assert.equal(providerHook({ payload: { model: "gpt-5.5" } }, context), undefined);
-
-    await command("on", context);
-    assert.deepEqual(JSON.parse(readFileSync(settingsFile, "utf8")), { enabled: true });
-    assert.equal(statuses.get("openai-fast-mode"), "[OpenAI: fast]");
-    assert.deepEqual(providerHook({ payload: { model: "gpt-5.5" } }, context), {
-      model: "gpt-5.5",
-      service_tier: "priority",
-    });
+    const providerHook = events.get("before_provider_request");
+    assert.ok(command && providerHook);
 
     await command("off", context);
+    assert.deepEqual(providerHook({ payload: { model: "claude", service_tier: "auto" } }, context), {
+      model: "claude",
+      service_tier: "standard_only",
+    });
     assert.deepEqual(JSON.parse(readFileSync(settingsFile, "utf8")), { enabled: false });
-    assert.equal(providerHook({ payload: { model: "gpt-5.5" } }, context), undefined);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -98,7 +137,10 @@ test("session start warns and disables Fast mode for invalid settings", () => {
   try {
     writeFileSync(settingsFile, '{"enabled":"yes"}\n');
     const { events } = createHarness(settingsFile);
-    const { context, statuses, notifications } = createContext();
+    const { context, statuses, notifications } = createContext({
+      provider: "openai",
+      api: "openai-responses",
+    });
     events.get("session_start")?.({}, context);
 
     assert.equal(statuses.get("openai-fast-mode"), undefined);

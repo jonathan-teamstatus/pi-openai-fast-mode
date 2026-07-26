@@ -1,21 +1,14 @@
 # pi-openai-fast-mode
 
-A small [Pi](https://pi.dev) extension that adds TUI controls for OpenAI's Fast service tier. It uses Pi's public provider-extension API and does not fork or patch Pi.
-
-OpenAI calls the user-facing mode **Fast**. On the wire, the corresponding Responses/Codex request value is `service_tier: "priority"`.
+A small [Pi](https://pi.dev) extension that adds provider-aware Fast mode controls through Pi's public provider-extension API. The `/fast` command and the existing settings location are preserved.
 
 ## Features
 
-- `/fast` opens an interactive TUI selector.
-- `/fast on`, `/fast off`, `/fast toggle`, and `/fast status` provide direct control.
-- `[OpenAI: fast]` appears in Pi's footer while Fast mode is enabled and an `openai` or `openai-codex` model is selected.
-- The preference persists across sessions.
-- Non-OpenAI provider requests are never modified.
-- Fast mode defaults to off.
+- `/fast`, `/fast on`, `/fast off`, `/fast toggle`, and `/fast status` control one persisted Fast mode setting.
+- The footer and status message identify the active provider strategy.
+- Fast mode defaults to off and unsupported providers are left alone.
 
 ## Installation
-
-Install the pinned release:
 
 ```bash
 pi install git:github.com/jonathan-teamstatus/pi-openai-fast-mode@v0.1.0
@@ -41,7 +34,7 @@ pi install "$PWD"
 | `/fast on` | Enable and persist Fast mode |
 | `/fast off` | Disable and persist Fast mode |
 | `/fast toggle` | Toggle and persist the preference |
-| `/fast status` | Show the preference, current model, request tier, and settings path |
+| `/fast status` | Show the preference, current model, provider strategy, request behavior, and settings path |
 
 ## Configuration
 
@@ -51,7 +44,7 @@ The extension writes:
 ~/.pi/agent/openai-fast-mode/settings.json
 ```
 
-When `PI_CODING_AGENT_DIR` is set, the file is stored beneath that directory instead.
+When `PI_CODING_AGENT_DIR` is set, the file is stored beneath that directory instead. The schema is unchanged:
 
 ```json
 {
@@ -61,24 +54,27 @@ When `PI_CODING_AGENT_DIR` is set, the file is stored beneath that directory ins
 
 Invalid or missing settings fail closed to disabled.
 
-## How it works
+## Supported provider strategies
 
-When enabled, the extension listens to Pi's public `before_provider_request` event. For exact provider/API pairs `openai`/`openai-responses` and `openai-codex`/`openai-codex-responses`, it returns a cloned payload with:
+Only these exact provider/API/model combinations are modified:
 
-```json
-{
-  "service_tier": "priority"
-}
-```
+| Provider/API | Fast on | Fast off |
+|---|---|---|
+| `openai` + `openai-responses` | top-level `service_tier: "priority"` | unchanged |
+| `openai-codex` + `openai-codex-responses` | top-level `service_tier: "priority"` | unchanged |
+| `anthropic` + `anthropic-messages` | top-level `service_tier: "auto"` | top-level `service_tier: "standard_only"` |
+| `google` + `google-generative-ai` | cloned `payload.config.serviceTier: "priority"` | unchanged |
+| `moonshotai` or `moonshotai-cn` + `openai-completions`, model `kimi-k2.7-code` | request model becomes `kimi-k2.7-code-highspeed` | unchanged |
 
-All other payload fields remain unchanged. The original payload object is not mutated, and other provider IDs or API types remain untouched.
+The `kimi-k2.7-code-highspeed` Moonshot model ID is supported and is not rewritten again. Payloads are cloned; neither the top-level payload nor nested Google config is mutated.
+
+OpenRouter, custom compatible providers, `google-vertex`, `kimi-coding`, and unsupported Kimi models are intentionally not modified.
 
 ## Important limits
 
-- Fast availability is controlled by OpenAI and depends on the selected model, account, and plan. The footer means Pi requested the priority tier; it is not independent proof that OpenAI served the request on that tier.
-- Fast mode consumes ChatGPT credits or API spend faster than standard processing. Consult OpenAI's current speed and pricing documentation before enabling it.
-- The public payload hook does not set Pi's internal typed `serviceTier` option. OpenAI account usage and billing are authoritative; Pi's local cost display may remain at standard-tier estimates when the response does not report the effective priority tier.
-- The extension intentionally does not modify OpenAI-compatible third-party providers, even if they accept a similarly named field.
+- Fast availability is controlled by each provider, model, account, and plan. The footer means the extension requested the provider strategy; it is not proof that the provider served the request on a faster tier.
+- Kimi's highspeed rewrite is a local request-payload change. Pi's local model/cost metadata may still describe the selected `kimi-k2.7-code` model rather than the rewritten highspeed request, so billing and effective availability should be checked with Moonshot.
+- Provider responses and account billing are authoritative. Local cost displays may not reflect provider-specific priority-tier pricing.
 
 ## Development
 
